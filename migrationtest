@@ -1,0 +1,173 @@
+#!/bin/bash
+#
+#This script is designed to put the domains on a 
+#server into a form that can be copy and pasted 
+#into a hosts file so the customer can check their
+# domains during a migration.
+#
+#This script is written to run on the target 
+#server after an initial sync.
+#
+#Please report any bugs to jvandeventer@liquidweb.com
+
+unalias ls 2> /dev/null
+
+#set the IP variable for the server
+ip=$(grep ADDR /etc/wwwacct.conf|awk '{print $2}')
+
+yesno () {
+#yes/no function
+echo -n "$1 (y/n): "
+read ans
+case "$ans" in
+	y|Y|yes|YES|Yes) return 0 ;;
+	*) echo "No? Ok... It's a free country..."; return 1 ;;
+esac
+}
+
+#Set the domains that will be put into the form.
+setdomains () {
+if [[ -f /root/domains.txt ]]
+	then
+	echo -n "/root/domains.txt exists. Use this?"
+		if yesno 
+			then
+			domains=$(cat /root/domains.txt)
+		else
+			echo "Doing all domains. Now is the time to ctrl-c if you don't want to."
+			sleep 3
+			domains=$(cat /etc/trueuserdomains|cut -d ':' -f1|sort)
+		fi
+	else
+	echo "Doing all domains. Now is the time to ctrl-c if you don't want to."
+	sleep 3
+	domains=$(cat /etc/trueuserdomains|cut -d ':' -f1|sort)
+fi 
+}
+
+#Set the users that the lwtest.html file will be added to.
+setusers () {
+if [[ -f /root/userlist.txt ]]
+	then
+	echo -n "/root/userlist.txt exists. Use this?"
+		if yesno
+			then
+			users=$(cat /root/userlist.txt)
+		else
+			echo "Doing all users. Last chance to jump ship."
+			sleep 3
+			users=$(\ls -A1 /var/cpanel/users | egrep -v '(system|root)')
+		fi
+	else
+	echo "Doing all users. Last chance to jump ship."
+	sleep 3
+	users=$(\ls -A1 /var/cpanel/users | egrep -v '(system|root)')
+fi
+}			
+				
+
+cleanhosts () {
+# If these files already exist, ask to remove them
+if [[ -f /usr/local/apache/htdocs/hosts_file_entries.html ]]
+	then
+	echo -n "Hosts file list exists. Remove?"
+		if yesno
+			then
+			rm -f /usr/local/apache/htdocs/hosts_file_entries.html
+			rm -f /usr/local/lp/htdocs/hosts_file_entries.html
+		else
+			echo "I got no place to park my stuff, man."
+			exit 0
+		fi
+	else
+	echo "Hosts file entry list does not exist. Proceeding."
+	sleep 1
+fi
+}
+
+cleanhtml () {
+# If these files already exist, ask to remove them
+if [[ -f /usr/local/apache/htdocs/migration_test_urls.html ]]
+	then
+	echo -n "lwtest.html file list exists. Remove?"
+		if yesno
+			then
+			rm -f /usr/local/apache/htdocs/migration_test_urls.html
+			rm -f /usr/local/lp/htdocs/migration_test_urls.html
+		else
+			echo "Then I got no place to park my stuff, man."
+			exit 1
+		fi
+	else
+	echo "Test html files do not exist. Proceeding."
+	sleep 1
+fi
+}
+
+makehosts () {
+#create hosts files for the domains
+for domain in $domains; do cat /etc/userdatadomains | grep $domain | sed -e 's/:/ /g' -e 's/==/ /g' | while read sdomain user owner type maindomain docroot dip port; do echo "<br>"$dip $sdomain "www."$sdomain >> /usr/local/apache/htdocs/hosts_file_entries.html; done; done
+}
+
+copyhosts () {
+#copy the hosts file to /usr/local/lp/htdocs/
+\cp /usr/local/apache/htdocs/hosts_file_entries.html /usr/local/lp/htdocs/
+}
+
+addhtml () {
+#add lwtest.html pages for all the migrated domains
+for each in $users; do echo "<html><body><h1>This is the new server</h1>" > /home/$each/public_html/lwtest.html;chown $each:$each /home/$each/public_html/lwtest.html;done
+}
+
+testdomains () {
+testdomains=$(for each in $domains; do echo "$each" | sed 's/$/\/lwtest.html/g'; done)
+}
+
+printhtml () {
+#write a list of the lwtest.html files to a publicly accessible list
+for each in $testdomains; do echo "<a href="http://$each">http://$each</a>" >> /usr/local/apache/htdocs/migration_test_urls.html; echo "<br>" >> /usr/local/apache/htdocs/migration_test_urls.html; done
+}
+
+copyhtml () {
+#copy the html page to /usr/local/lp/htdocs/
+\cp /usr/local/apache/htdocs/migration_test_urls.html /usr/local/lp/htdocs/
+}
+
+
+#run
+setdomains
+setusers
+cleanhosts
+cleanhtml
+makehosts
+copyhosts
+addhtml
+testdomains
+printhtml
+copyhtml
+
+#Print the message that can be copy/pasted into the ticket.
+echo && echo "
+
+Hello,
+
+I have finished the initial migration of your data. Now is the time to inspect your sites to make sure they are working correctly on the new server. The preferred method is to modify the hosts file on your home or office computer by entering the new ip for your domain. This method bypasses the normal dns lookup so you can view your domain at the ip you specify rather than the ip it is configured to resolve to with dns.
+
+I have created a page on your server of the lines you will need to enter into your hosts file. That page can be found here: "
+
+echo && echo "http://"$ip"/hosts_file_entries.html"
+
+echo "
+Here is a tutorial that explains how to edit your hosts file:
+
+http://kb.liquidweb.com/dns-hosts-file/
+
+Using this method it may be necessary to clear the cache in your browser.
+
+I have also created an html file on your domains to ensure you are resolving to the correct server. The list of those files can be found here: "
+
+echo && echo "http://"$ip"/migration_test_urls.html"
+
+echo "
+Once testing is complete we can schedule a time to do the final sync. "
+
