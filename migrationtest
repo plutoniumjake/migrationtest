@@ -13,34 +13,37 @@
 unalias ls 2> /dev/null
 
 #set the IP variable for the server
-ip=$(grep ADDR /etc/wwwacct.conf|awk '{print $2}')
-
+ip=$(cat /var/cpanel/mainip)
+#Yes/no function. Defaults to yes.
 yesno () {
-#yes/no function
-echo -n "$1 (y/n): "
-read ans
-case "$ans" in
-	y|Y|yes|YES|Yes) return 0 ;;
-	*) echo "No? Ok... It's a free country..."; return 1 ;;
-esac
+while true; do
+        read -p "$*? [Y/n] " yn
+        case $yn in
+                yes|Yes|YES|y|Y|"")
+                return 0  ;;
+                no|No|n|N|NO)
+                return 1  ;;
+                *)
+                echo "Please answer 'y' or 'n'."
+        esac
+done
 }
-
 #Set the domains that will be put into the form.
 setdomains () {
-if [[ -f /root/domains.txt ]]
+if [[ -f /root/domainlist.txt ]]
 	then
-	echo -n "/root/domains.txt exists. Use this?"
+	echo -n "/root/domainlist.txt exists. Use this?"
 		if yesno 
 			then
-			domains=$(cat /root/domains.txt)
+			domains=$(cat /root/domainlist.txt)
 		else
-			echo "Doing all domains. Now is the time to ctrl-c if you don't want to."
-			sleep 3
+			echo "Creating hosts file entries for all domains. Now is the time to ctrl-c if you don't want to."
+			sleep 2
 			domains=$(cat /etc/trueuserdomains|cut -d ':' -f1|sort)
 		fi
 	else
-	echo "Doing all domains. Now is the time to ctrl-c if you don't want to."
-	sleep 3
+	echo "Creating hosts file entries for all domains. Now is the time to ctrl-c if you don't want to."
+	sleep 2
 	domains=$(cat /etc/trueuserdomains|cut -d ':' -f1|sort)
 fi 
 }
@@ -54,13 +57,13 @@ if [[ -f /root/userlist.txt ]]
 			then
 			users=$(cat /root/userlist.txt)
 		else
-			echo "Doing all users. Last chance to jump ship."
-			sleep 3
+			echo "Adding lwtest.html to all users. Last chance to jump ship."
+			sleep 2
 			users=$(\ls -A1 /var/cpanel/users | egrep -v '(system|root)')
 		fi
 	else
-	echo "Doing all users. Last chance to jump ship."
-	sleep 3
+	echo "Adding lwtest.html all users. Last chance to jump ship."
+	sleep 2
 	users=$(\ls -A1 /var/cpanel/users | egrep -v '(system|root)')
 fi
 }			
@@ -74,7 +77,6 @@ if [[ -f /usr/local/apache/htdocs/hosts_file_entries.html ]]
 		if yesno
 			then
 			rm -f /usr/local/apache/htdocs/hosts_file_entries.html
-			rm -f /usr/local/lp/htdocs/hosts_file_entries.html
 		else
 			echo "I got no place to park my stuff, man."
 			exit 0
@@ -93,7 +95,6 @@ if [[ -f /usr/local/apache/htdocs/migration_test_urls.html ]]
 		if yesno
 			then
 			rm -f /usr/local/apache/htdocs/migration_test_urls.html
-			rm -f /usr/local/lp/htdocs/migration_test_urls.html
 		else
 			echo "Then I got no place to park my stuff, man."
 			exit 1
@@ -109,10 +110,6 @@ makehosts () {
 for domain in $domains; do cat /etc/userdatadomains | grep $domain | sed -e 's/:/ /g' -e 's/==/ /g' | while read sdomain user owner type maindomain docroot dip port; do echo "<br>"$dip $sdomain "www."$sdomain >> /usr/local/apache/htdocs/hosts_file_entries.html; done; done
 }
 
-copyhosts () {
-#copy the hosts file to /usr/local/lp/htdocs/
-\cp /usr/local/apache/htdocs/hosts_file_entries.html /usr/local/lp/htdocs/
-}
 
 addhtml () {
 #add lwtest.html pages for all the migrated domains
@@ -128,46 +125,51 @@ printhtml () {
 for each in $testdomains; do echo "<a href="http://$each">http://$each</a>" >> /usr/local/apache/htdocs/migration_test_urls.html; echo "<br>" >> /usr/local/apache/htdocs/migration_test_urls.html; done
 }
 
-copyhtml () {
-#copy the html page to /usr/local/lp/htdocs/
-\cp /usr/local/apache/htdocs/migration_test_urls.html /usr/local/lp/htdocs/
-}
-
-
+main () {
 #run
 setdomains
 setusers
 cleanhosts
 cleanhtml
 makehosts
-copyhosts
 addhtml
 testdomains
 printhtml
-copyhtml
+message
+}
 
 #Print the message that can be copy/pasted into the ticket.
-echo && echo "
+message () {
+cat <<-EOF
+
 
 Hello,
 
-I have finished the initial migration of your data. Now is the time to inspect your sites to make sure they are working correctly on the new server. The preferred method is to modify the hosts file on your home or office computer by entering the new ip for your domain. This method bypasses the normal dns lookup so you can view your domain at the ip you specify rather than the ip it is configured to resolve to with dns.
+I have finished the initial migration of your data. Now is the time to inspect your sites to make sure they are working correctly on the new server. The preferred method is to modify the hosts file on your home or office computer by entering the new ip for your domain(s).
 
-I have created a page on your server of the lines you will need to enter into your hosts file. That page can be found here: "
+I have created a page on your server of the lines you will need to enter into your hosts file. [Click here to see that page.](http://${ip}/hosts_file_entries.html) 
 
-echo && echo "http://"$ip"/hosts_file_entries.html"
+[Click here for a knowledge base article that explains how to edit your hosts file.](http://kb.liquidweb.com/dns-hosts-file)
 
-echo "
-Here is a tutorial that explains how to edit your hosts file:
+Testing with this method it may be necessary to clear the cache in your browser.
 
-http://kb.liquidweb.com/dns-hosts-file/
+The process of editing your hosts file is as simple as adding a few lines to a file through a text editor. This will tell your browser  IP address you want to load a domain from instead of looking it up from a DNS server. Here are a few youtube videos that will walk you through setting up your hosts file:
 
-Using this method it may be necessary to clear the cache in your browser.
+[For Windows 7 click here.](https://www.youtube.com/watch?v=DImy0En1-HI)
 
-I have also created an html file on your domains to ensure you are resolving to the correct server. The list of those files can be found here: "
+[For Windows 8 click here.](https://www.youtube.com/watch?v=6HtODhWg_YA)
 
-echo && echo "http://"$ip"/migration_test_urls.html"
+[For Mac OSX click here.](https://www.youtube.com/watch?v=U4xXqSw3I58)
 
-echo "
-Once testing is complete we can schedule a time to do the final sync. "
+* Please note: If you are using OS X Mavericks you will need to use \`dscacheutil -flushcache; sudo killall -HUP mDNSResponder\` to flush your DNS.
 
+If you require further assistance in setting up your hosts file our support team is available 24/7.
+
+I have also created an html file on your domains to ensure you are resolving to the correct server. [Click here to view that page.](http://${ip}/migration_test_urls.html)
+
+If you have correctly edited your hosts file you should see a message declaring you are reaching the new server.
+
+Once testing is complete we can schedule a time to do the final sync.
+EOF
+}
+main
